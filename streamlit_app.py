@@ -1,308 +1,264 @@
-import React, { useState } from 'react';
+import streamlit as st
+import requests
+import json
+import os
 
-// Generic AI Call Function (reused from previous apps)
-const callGeminiAPI = async (prompt) => {
-  const chatHistory = [{ role: "user", parts: [{ text: prompt }] }];
-  const payload = { contents: chatHistory };
-  const apiKey = ""; // Canvas will provide this at runtime
-  const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${apiKey}`;
+# --- Configuration ---
+# Access the Gemini API Key securely from Streamlit secrets
+# In Streamlit Cloud, you'll set this under 'Secrets' (e.g., API_KEY="YOUR_GEMINI_API_KEY")
+# For local testing, you can create a .streamlit/secrets.toml file:
+# API_KEY = "YOUR_GEMINI_API_KEY"
+try:
+    GEMINI_API_KEY = st.secrets["API_KEY"]
+except FileNotFoundError:
+    st.error("API Key not found. Please set 'API_KEY' in your Streamlit secrets or in .streamlit/secrets.toml for local development.")
+    st.stop()
+except KeyError:
+    st.error("API Key not found. Please set 'API_KEY' in your Streamlit secrets or in .streamlit/secrets.toml for local development.")
+    st.stop()
 
-  try {
-    const response = await fetch(apiUrl, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload)
-    });
-    const result = await response.json();
 
-    if (result.candidates && result.candidates.length > 0 &&
-        result.candidates[0].content && result.candidates[0].content.parts &&
-        result.candidates[0].content.parts.length > 0) {
-      return result.candidates[0].content.parts[0].text;
-    } else {
-      console.error("Unexpected API response structure:", result);
-      return "Error: Could not get a valid response from AI. Please try again.";
+GEMINI_API_URL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent"
+
+# --- Function to call the Gemini API ---
+def call_gemini_api(prompt):
+    """
+    Sends a prompt to the Gemini API and returns the text response.
+    """
+    headers = {
+        'Content-Type': 'application/json'
     }
-  } catch (error) {
-    console.error("Error calling Gemini API:", error);
-    return "Error: Failed to connect to AI. Please check your network or try again later.";
-  }
-};
-
-// Main App component for the Structured Problem-Solver
-const App = () => {
-  const [currentStep, setCurrentStep] = useState(1); // 1: Problem, 2: Questions, 3: Events, 4: Result
-  const [problemStatement, setProblemStatement] = useState('');
-  const [aiGeneratedQuestions, setAiGeneratedQuestions] = useState('');
-  const [userAnswersToQuestions, setUserAnswersToQuestions] = useState('');
-  const [supportingEvents, setSupportingEvents] = useState('');
-  const [finalSolution, setFinalSolution] = useState('');
-  const [finalFeedback, setFinalFeedback] = useState('');
-  const [loading, setLoading] = useState(false);
-  const [errorMessage, setErrorMessage] = useState('');
-
-  const handleProblemSubmit = async () => {
-    if (!problemStatement.trim()) {
-      setErrorMessage("Please describe your problem to proceed.");
-      return;
+    params = {
+        'key': GEMINI_API_KEY
     }
-    setLoading(true);
-    setErrorMessage('');
-    // AI generates questions based on the initial problem
-    const prompt = `As a student, I have the following problem: "${problemStatement}". To help me understand this problem better and find a solution, please ask me 3-5 concise, insightful follow-up questions. Format them as a numbered list.`;
-    const response = await callGeminiAPI(prompt);
-    setAiGeneratedQuestions(response);
-    setLoading(false);
-    setCurrentStep(2);
-  };
-
-  const handleQuestionsAnswered = () => {
-    if (!userAnswersToQuestions.trim()) {
-      setErrorMessage("Please answer the questions to proceed.");
-      return;
+    payload = {
+        "contents": [
+            {
+                "role": "user",
+                "parts": [{"text": prompt}]
+            }
+        ]
     }
-    setErrorMessage('');
-    setCurrentStep(3);
-  };
 
-  const handleEventsSubmitted = async () => {
-    if (!supportingEvents.trim()) {
-      setErrorMessage("Please provide some relevant events or details to proceed.");
-      return;
-    }
-    setLoading(true);
-    setErrorMessage('');
+    try:
+        with st.spinner("AI is thinking..."):
+            response = requests.post(GEMINI_API_URL, headers=headers, params=params, data=json.dumps(payload))
+            response.raise_for_status() # Raise an exception for HTTP errors (4xx or 5xx)
+            result = response.json()
 
-    // Consolidate all information for the final AI call
-    full_context_prompt = (
-    "As a student, I need help solving a problem. Here's a structured overview of my situation:\n\n"
-    f"Problem: \"{problem}\"\n\n"
-    f"My answers to follow-up questions:\n\"{answers}\"\n\n"
-    f"Relevant events or specific details:\n\"{events}\"\n\n"
-    "Based on ALL this information, please do two things:\n"
-    "1. Provide a clear, actionable solution.\n"
-    "2. Provide constructive feedback to improve my problem-solving approach."
-)
+            if result.get('candidates') and len(result['candidates']) > 0 and \
+               result['candidates'][0].get('content') and \
+               result['candidates'][0]['content'].get('parts') and \
+               len(result['candidates'][0]['content']['parts']) > 0:
+                return result['candidates'][0]['content']['parts'][0]['text']
+            else:
+                st.error(f"Unexpected API response structure: {result}")
+                return "Error: Could not get a valid response from AI. Please try again."
+    except requests.exceptions.RequestException as e:
+        st.error(f"Error calling Gemini API: {e}. Please check your API key and network connection.")
+        return "Error: Failed to connect to AI. Please check your network or API key."
+    except json.JSONDecodeError as e:
+        st.error(f"Error decoding JSON response: {e}. Invalid JSON response from AI.")
+        return "Error: Invalid JSON response from AI."
+
+# --- Initialize Streamlit Session State ---
+# This ensures variables persist across reruns
+if 'current_step' not in st.session_state:
+    st.session_state.current_step = 1
+    st.session_state.problem_statement = ""
+    st.session_state.ai_generated_questions = ""
+    st.session_state.user_answers_to_questions = ""
+    st.session_state.supporting_events = ""
+    st.session_state.final_solution = ""
+    st.session_state.final_feedback = ""
+    st.session_state.error_message = ""
+
+# --- Callbacks for Navigation ---
+def next_step():
+    st.session_state.current_step += 1
+    st.session_state.error_message = "" # Clear error on step change
+
+def set_error_message(message):
+    st.session_state.error_message = message
+
+def restart_app():
+    st.session_state.current_step = 1
+    st.session_state.problem_statement = ""
+    st.session_state.ai_generated_questions = ""
+    st.session_state.user_answers_to_questions = ""
+    st.session_state.supporting_events = ""
+    st.session_state.final_solution = ""
+    st.session_state.final_feedback = ""
+    st.session_state.error_message = ""
+
+# --- Application Layout ---
+st.set_page_config(layout="centered", page_title="Structured AI Problem-Solver")
+
+st.title("🧠 Structured AI Problem-Solver")
+st.markdown("A step-by-step assistant to help students **define, understand, and solve problems** with AI guidance.")
+st.markdown("---")
+
+if st.session_state.error_message:
+    st.error(st.session_state.error_message)
+
+# --- Step 1: Identify Your Problem ---
+if st.session_state.current_step == 1:
+    st.header("Step 1: Identify Your Problem")
+    st.write("Start by clearly stating the problem or challenge you are facing. Being as specific as possible helps the AI.")
+
+    st.session_state.problem_statement = st.text_area(
+        "My Problem Is:",
+        value=st.session_state.problem_statement,
+        height=150,
+        placeholder="e.g., I'm consistently late submitting my assignments because I procrastinate.",
+        key="problem_input" # Unique key for text_area
+    )
+
+    col1, col2 = st.columns([1, 4])
+    with col1:
+        if st.button("Submit Problem & Get Questions", key="submit_problem_btn"):
+            if not st.session_state.problem_statement.strip():
+                set_error_message("Please describe your problem to proceed.")
+            else:
+                prompt_questions = f"""As a student, I have the following problem: "{st.session_state.problem_statement}". To help me understand this problem better and find a solution, please ask me 3-5 concise, insightful follow-up questions. Format them as a numbered list."""
+                ai_response = call_gemini_api(prompt_questions)
+                if "Error" not in ai_response:
+                    st.session_state.ai_generated_questions = ai_response
+                    next_step()
+    with col2:
+        st.markdown(
+            """
+            <div style="padding: 10px; background-color: #e0f2f7; border-radius: 8px;">
+                <small><strong>Skill Development Tip:</strong> Articulating a problem clearly is the first step to solving it. This step helps you practice precision in articulation.</small>
+            </div>
+            """, unsafe_allow_html=True
+        )
 
 
-Problem: "${problemStatement}"
+# --- Step 2: Brainstorm for Understanding (AI asks questions) ---
+elif st.session_state.current_step == 2:
+    st.header("Step 2: Brainstorm for Understanding")
+    st.write("The AI has generated some questions to help you think more deeply about your problem. Please answer them to provide more context.")
+
+    st.subheader("AI's Clarifying Questions:")
+    st.info(st.session_state.ai_generated_questions)
+
+    st.session_state.user_answers_to_questions = st.text_area(
+        "Your Answers:",
+        value=st.session_state.user_answers_to_questions,
+        height=200,
+        placeholder="Provide detailed answers to the AI's questions here. Make sure to address each question.",
+        key="answers_input"
+    )
+
+    col1, col2 = st.columns([1, 4])
+    with col1:
+        if st.button("Continue to Events", key="continue_events_btn"):
+            if not st.session_state.user_answers_to_questions.strip():
+                set_error_message("Please answer the questions to proceed.")
+            else:
+                next_step()
+    with col2:
+        st.markdown(
+            """
+            <div style="padding: 10px; background-color: #e0f2f7; border-radius: 8px;">
+                <small><strong>Skill Development Tip:</strong> Answering probing questions enhances your analytical and self-reflection skills, leading to a deeper understanding of the root cause.</small>
+            </div>
+            """, unsafe_allow_html=True
+        )
+
+
+# --- Step 3: Provide Supporting Events ---
+elif st.session_state.current_step == 3:
+    st.header("Step 3: Provide Supporting Events/Context")
+    st.write("Describe specific events, scenarios, or situations where this problem occurs or is particularly noticeable. This helps the AI understand the real-world context.")
+
+    st.session_state.supporting_events = st.text_area(
+        "Relevant Events/Details:",
+        value=st.session_state.supporting_events,
+        height=200,
+        placeholder="e.g., Last week, I missed a deadline because I spent hours on social media instead of studying. | I often feel overwhelmed when I have multiple assignments due in the same week.",
+        key="events_input"
+    )
+
+    col1, col2 = st.columns([1, 4])
+    with col1:
+        if st.button("Get Solution & Feedback", key="get_solution_btn"):
+            if not st.session_state.supporting_events.strip():
+                set_error_message("Please provide some relevant events or details to proceed.")
+            else:
+                # Consolidate all information for the final AI call
+                full_context_prompt = f"""As a student, I need help solving a problem. Here's a structured overview of my situation:
+
+Problem: "{st.session_state.problem_statement}"
 
 My answers to follow-up questions that clarify the problem:
-"${userAnswersToQuestions}"
+"{st.session_state.user_answers_to_questions}"
 
 Relevant events or specific details that happened:
-"${supportingEvents}"
+"{st.session_state.supporting_events}"
 
 Based on ALL this information, please do two things:
 1. Provide a clear, actionable solution or a set of steps to address my problem.
-2. Provide constructive feedback on my overall understanding of the problem and the clarity of the information I provided, suggesting how I could further refine my problem-solving approach in the future.`;
+2. Provide constructive feedback on my overall understanding of the problem and the clarity of the information I provided, suggesting how I could further refine my problem-solving approach in the future.
+Format your response clearly with 'Solution:' and 'Feedback:' headings."""
 
-    const response = await callGeminiAPI(fullContextPrompt);
-    // Attempt to split solution and feedback (heuristic)
-    const solutionStartIndex = response.toLowerCase().indexOf("solution:");
-    const feedbackStartIndex = response.toLowerCase().indexOf("feedback:");
+                ai_response_full = call_gemini_api(full_context_prompt)
 
-    if (solutionStartIndex !== -1 && feedbackStartIndex !== -1) {
-      if (solutionStartIndex < feedbackStartIndex) {
-        setFinalSolution(response.substring(solutionStartIndex + "solution:".length, feedbackStartIndex).trim());
-        setFinalFeedback(response.substring(feedbackStartIndex + "feedback:".length).trim());
-      } else { // Feedback came first
-        setFinalFeedback(response.substring(feedbackStartIndex + "feedback:".length, solutionStartIndex).trim());
-        setFinalSolution(response.substring(solutionStartIndex + "solution:".length).trim());
-      }
-    } else if (solutionStartIndex !== -1) {
-        setFinalSolution(response.substring(solutionStartIndex + "solution:".length).trim());
-        setFinalFeedback("No explicit feedback section found, but consider the solution's clarity.");
-    } else if (feedbackStartIndex !== -1) {
-        setFinalFeedback(response.substring(feedbackStartIndex + "feedback:".length).trim());
-        setFinalSolution("No explicit solution section found, but consider the feedback for your problem-solving.");
-    } else {
-        # Fallback if AI doesn't use "Solution:" and "Feedback:" exactly
-        setFinalSolution("AI generated response (could not parse into specific solution/feedback sections):\n" + response);
-        setFinalFeedback("");
-    }
+                # Attempt to parse solution and feedback
+                if "Solution:" in ai_response_full and "Feedback:" in ai_response_full:
+                    parts = ai_response_full.split("Solution:", 1)
+                    solution_part = parts[1] if len(parts) > 1 else ""
 
-    setLoading(false);
-    setCurrentStep(4);
-  };
+                    if "Feedback:" in solution_part:
+                        solution_text = solution_part.split("Feedback:", 1)[0].strip()
+                        feedback_text = solution_part.split("Feedback:", 1)[1].strip()
+                    else: # Fallback if Feedback is not after Solution
+                        solution_text = solution_part.strip()
+                        feedback_text = "No explicit 'Feedback:' section found after solution."
 
-  const handleRestart = () => {
-    setCurrentStep(1);
-    setProblemStatement('');
-    setAiGeneratedQuestions('');
-    setUserAnswersToQuestions('');
-    setSupportingEvents('');
-    setFinalSolution('');
-    setFinalFeedback('');
-    setErrorMessage('');
-  };
+                    st.session_state.final_solution = solution_text
+                    st.session_state.final_feedback = feedback_text
+                else:
+                    # Fallback if AI doesn't use the exact headings
+                    st.session_state.final_solution = "Could not parse specific solution/feedback sections. Full AI response:\n" + ai_response_full
+                    st.session_state.final_feedback = ""
 
-  return (
-    <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100 p-4 sm:p-8 flex flex-col items-center">
-      <header className="w-full max-w-4xl bg-white shadow-lg rounded-xl p-6 mb-8 text-center">
-        <h1 className="text-4xl sm:text-5xl font-extrabold text-gray-900 mb-4 tracking-tight">
-          Structured AI Problem-Solver
-        </h1>
-        <p className="text-lg text-gray-600">
-          A step-by-step assistant to help students define, understand, and solve problems with AI guidance.
-        </p>
-      </header>
+                next_step()
+    with col2:
+        st.markdown(
+            """
+            <div style="padding: 10px; background-color: #e0f2f7; border-radius: 8px;">
+                <small><strong>Skill Development Tip:</strong> Providing concrete examples strengthens your ability to identify patterns and specific triggers related to a problem.</small>
+            </div>
+            """, unsafe_allow_html=True
+        )
 
-      <main className="w-full max-w-4xl bg-white shadow-xl rounded-xl p-6 sm:p-8">
-        {errorMessage && (
-          <div className="bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded-lg relative mb-6" role="alert">
-            <strong className="font-bold">Error!</strong>
-            <span className="block sm:inline"> {errorMessage}</span>
-          </div>
-        )}
+# --- Step 4: Solution and Feedback ---
+elif st.session_state.current_step == 4:
+    st.header("Step 4: AI's Solution & Feedback")
+    st.write("Based on all the information you provided, here is the AI's suggested solution and feedback on your problem-solving process.")
 
-        {/* Step 1: Identify Your Problem */}
-        {currentStep === 1 && (
-          <div className="p-6 border border-gray-200 rounded-lg bg-gray-50 shadow-sm">
-            <h2 className="text-2xl font-bold text-gray-800 mb-4">Step 1: Identify Your Problem</h2>
-            <p className="text-gray-700 mb-4">
-              Start by clearly stating the problem or challenge you are facing. Be as specific as possible.
-            </p>
-            <label htmlFor="problemStatement" className="block text-gray-700 text-sm font-bold mb-2">
-              My Problem Is:
-            </label>
-            <textarea
-              id="problemStatement"
-              className="shadow appearance-none border rounded-lg w-full py-3 px-4 text-gray-700 leading-tight focus:outline-none focus:ring-2 focus:ring-indigo-400 h-32 resize-y"
-              placeholder="e.g., I'm consistently late submitting my assignments because I procrastinate."
-              value={problemStatement}
-              onChange={(e) => setProblemStatement(e.target.value)}
-            ></textarea>
-            <button
-              onClick={handleProblemSubmit}
-              className="bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-3 px-6 rounded-lg focus:outline-none focus:shadow-outline transition-colors duration-300 disabled:opacity-50 disabled:cursor-not-allowed mt-4"
-              disabled={loading}
-            >
-              {loading ? 'Asking AI for Questions...' : 'Submit Problem & Get Clarifying Questions'}
-            </button>
-            <p className="mt-4 text-sm text-gray-600">
-              **Skill Development Tip:** Clearly defining the problem is half the solution. This step helps you practice precision in articulation.
-            </p>
-          </div>
-        )}
+    if st.session_state.final_solution:
+        st.subheader("Suggested Solution:")
+        st.markdown(st.session_state.final_solution)
+        st.markdown(
+            """
+            <div style="padding: 10px; background-color: #e6ffe6; border-radius: 8px; border: 1px solid #c6ffc6;">
+                <small><strong>Skill Development Tip:</strong> Evaluate this solution. Is it realistic for your situation? What are the first three steps you would take to implement it? This develops your practical implementation skills.</small>
+            </div>
+            """, unsafe_allow_html=True
+        )
 
-        {/* Step 2: Brainstorm for Understanding (AI asks questions) */}
-        {currentStep === 2 && (
-          <div className="p-6 border border-gray-200 rounded-lg bg-gray-50 shadow-sm">
-            <h2 className="text-2xl font-bold text-gray-800 mb-4">Step 2: Brainstorm for Understanding</h2>
-            <p className="text-gray-700 mb-4">
-              The AI has generated some questions to help you think more deeply about your problem. Please answer them to provide more context.
-            </p>
-            {loading ? (
-              <p className="text-gray-600">AI is generating questions...</p>
-            ) : (
-              aiGeneratedQuestions && (
-                <div className="mb-4 p-4 bg-blue-50 rounded-lg shadow-inner border border-blue-200">
-                  st.markdown("### AI's Clarifying Questions:")
-                  <div className="prose max-w-none" dangerouslySetInnerHTML={{ __html: aiGeneratedQuestions.replace(/\n/g, '<br>') }} />
-                </div>
-              )
-            )}
-            <label htmlFor="userAnswersToQuestions" className="block text-gray-700 text-sm font-bold mb-2 mt-4">
-              Your Answers:
-            </label>
-            <textarea
-              id="userAnswersToQuestions"
-              className="shadow appearance-none border rounded-lg w-full py-3 px-4 text-gray-700 leading-tight focus:outline-none focus:ring-2 focus:ring-indigo-400 h-48 resize-y"
-              placeholder="Provide detailed answers to the AI's questions here."
-              value={userAnswersToQuestions}
-              onChange={(e) => setUserAnswersToQuestions(e.target.value)}
-            ></textarea>
-            <button
-              onClick={handleQuestionsAnswered}
-              className="bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-3 px-6 rounded-lg focus:outline-none focus:shadow-outline transition-colors duration-300 disabled:opacity-50 disabled:cursor-not-allowed mt-4"
-              disabled={loading}
-            >
-              Continue to Events
-            </button>
-            <p className="mt-4 text-sm text-gray-600">
-              **Skill Development Tip:** Answering probing questions enhances your analytical and self-reflection skills, leading to a deeper understanding of the root cause.
-            </p>
-          </div>
-        )}
+    if st.session_state.final_feedback:
+        st.subheader("Feedback on Your Process:")
+        st.markdown(st.session_state.final_feedback)
+        st.markdown(
+            """
+            <div style="padding: 10px; background-color: #fffacd; border-radius: 8px; border: 1px solid #ffe8b6;">
+                <small><strong>Skill Development Tip:</strong> Reflect on the feedback. What did you do well in defining the problem? What could you improve in your next problem-solving attempt? Continuous self-assessment is key to mastery.</small>
+            </div>
+            """, unsafe_allow_html=True
+        )
 
-        {/* Step 3: Provide Supporting Events */}
-        {currentStep === 3 && (
-          <div className="p-6 border border-gray-200 rounded-lg bg-gray-50 shadow-sm">
-            <h2 className="text-2xl font-bold text-gray-800 mb-4">Step 3: Provide Supporting Events/Context</h2>
-            <p className="text-gray-700 mb-4">
-              Describe specific events, scenarios, or situations where this problem occurs or is particularly noticeable. This helps the AI understand the real-world context.
-            </p>
-            <label htmlFor="supportingEvents" className="block text-gray-700 text-sm font-bold mb-2">
-              Relevant Events/Details:
-            </label>
-            <textarea
-              id="supportingEvents"
-              className="shadow appearance-none border rounded-lg w-full py-3 px-4 text-gray-700 leading-tight focus:outline-none focus:ring-2 focus:ring-indigo-400 h-48 resize-y"
-              placeholder="e.g., 'Last week, I missed a deadline because I spent hours on social media instead of studying.' or 'I often feel overwhelmed when I have multiple assignments due in the same week.'"
-              value={supportingEvents}
-              onChange={(e) => setSupportingEvents(e.target.value)}
-            ></textarea>
-            <button
-              onClick={handleEventsSubmitted}
-              className="bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-3 px-6 rounded-lg focus:outline-none focus:shadow-outline transition-colors duration-300 disabled:opacity-50 disabled:cursor-not-allowed mt-4"
-              disabled={loading}
-            >
-              {loading ? 'Getting Solution & Feedback...' : 'Get Solution & Feedback'}
-            </button>
-            <p className="mt-4 text-sm text-gray-600">
-              **Skill Development Tip:** Providing concrete examples strengthens your ability to identify patterns and specific triggers related to a problem.
-            </p>
-          </div>
-        )}
-
-        {/* Step 4: Solution and Feedback */}
-        {currentStep === 4 && (
-          <div className="p-6 border border-gray-200 rounded-lg bg-gray-50 shadow-sm">
-            <h2 className="text-2xl font-bold text-gray-800 mb-4">Step 4: AI's Solution & Feedback</h2>
-            <p className="text-gray-700 mb-4">
-              Based on all the information you provided, here is the AI's suggested solution and feedback on your problem-solving process.
-            </p>
-            {loading ? (
-              <p className="text-gray-600">Generating solution and feedback...</p>
-            ) : (
-              <>
-                {finalSolution && (
-                  <div className="mb-6 p-4 bg-green-50 rounded-lg shadow-inner border border-green-200">
-                    <h3 className="text-xl font-semibold text-gray-800 mb-3">Suggested Solution:</h3>
-                    <div className="prose max-w-none" dangerouslySetInnerHTML={{ __html: finalSolution.replace(/\n/g, '<br>') }} />
-                    <p className="mt-4 text-sm text-gray-600">
-                      **Skill Development Tip:** Evaluate this solution. Is it realistic? What are the first three steps you would take to implement it? This develops your practical implementation skills.
-                    </p>
-                  </div>
-                )}
-                {finalFeedback && (
-                  <div className="p-4 bg-yellow-50 rounded-lg shadow-inner border border-yellow-200">
-                    <h3 className="text-xl font-semibold text-gray-800 mb-3">Feedback on Your Process:</h3>
-                    <div className="prose max-w-none" dangerouslySetInnerHTML={{ __html: finalFeedback.replace(/\n/g, '<br>') }} />
-                    <p className="mt-4 text-sm text-gray-600">
-                      **Skill Development Tip:** Reflect on the feedback. What did you do well? What could you improve in your next problem-solving attempt? Continuous self-assessment is key to mastery.
-                    </p>
-                  </div>
-                )}
-              </>
-            )}
-            <button
-              onClick={handleRestart}
-              className="bg-purple-600 hover:bg-purple-700 text-white font-bold py-3 px-6 rounded-lg focus:outline-none focus:shadow-outline transition-colors duration-300 mt-6"
-            >
-              Start New Problem
-            </button>
-          </div>
-        )}
-      </main>
-
-      <footer className="w-full max-w-4xl text-center text-gray-600 mt-8">
-        <p>&copy; 2025 Structured AI Problem-Solver. All rights reserved.</p>
-      </footer>
-    </div>
-  );
-};
-
-export default App;
-
+    st.button("Start New Problem", on_click=restart_app, key="restart_btn")
