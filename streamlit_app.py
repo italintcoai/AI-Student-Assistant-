@@ -117,7 +117,7 @@ Based on ALL this information, please do two things:
         setFinalFeedback(response.substring(feedbackStartIndex + "feedback:".length).trim());
         setFinalSolution("No explicit solution section found, but consider the feedback for your problem-solving.");
     } else {
-        // Fallback if AI doesn't use "Solution:" and "Feedback:" exactly
+        # Fallback if AI doesn't use "Solution:" and "Feedback:" exactly
         setFinalSolution("AI generated response (could not parse into specific solution/feedback sections):\n" + response);
         setFinalFeedback("");
     }
