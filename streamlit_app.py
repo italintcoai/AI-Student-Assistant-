@@ -198,7 +198,7 @@ Based on ALL this information, please do two things:
             ) : (
               aiGeneratedQuestions && (
                 <div className="mb-4 p-4 bg-blue-50 rounded-lg shadow-inner border border-blue-200">
-                  <h3 className="text-xl font-semibold text-gray-800 mb-3">AI's Clarifying Questions:</h3>
+                  st.markdown("### AI's Clarifying Questions:")
                   <div className="prose max-w-none" dangerouslySetInnerHTML={{ __html: aiGeneratedQuestions.replace(/\n/g, '<br>') }} />
                 </div>
               )
