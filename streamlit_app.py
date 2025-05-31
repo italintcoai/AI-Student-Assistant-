@@ -74,7 +74,16 @@ const App = () => {
     setErrorMessage('');
 
     // Consolidate all information for the final AI call
-    const fullContextPrompt = `As a student, I need help solving a problem. Here's a structured overview of my situation:
+    full_context_prompt = (
+    "As a student, I need help solving a problem. Here's a structured overview of my situation:\n\n"
+    f"Problem: \"{problem}\"\n\n"
+    f"My answers to follow-up questions:\n\"{answers}\"\n\n"
+    f"Relevant events or specific details:\n\"{events}\"\n\n"
+    "Based on ALL this information, please do two things:\n"
+    "1. Provide a clear, actionable solution.\n"
+    "2. Provide constructive feedback to improve my problem-solving approach."
+)
+
 
 Problem: "${problemStatement}"
 
